@@ -1114,11 +1114,10 @@
             const whatsappUrl = `https://wa.me/${phoneNumber}?text=${message}`;
 
             window.open(whatsappUrl, '_blank');
-            contact.status = 'sent';
-            saveContacts();
-            updateStats();
-            renderContactList();
-
+            
+            // Don't mark as sent automatically - user must send manually in WhatsApp
+            // Contact stays 'pending' until you click send in WhatsApp
+            
             if (imageFile) {
                 setTimeout(() => {
                     alert('📸 Don\'t forget to attach your image in WhatsApp!');
