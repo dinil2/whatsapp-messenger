@@ -1111,17 +1111,39 @@
 
             const message = encodeURIComponent(contact.message);
             const phoneNumber = contact.number.replace(/\+/g, '');
-            const whatsappUrl = `https://wa.me/${phoneNumber}?text=${message}`;
 
-            window.open(whatsappUrl, '_blank');
-            
-            // Don't mark as sent automatically - user must send manually in WhatsApp
-            // Contact stays 'pending' until you click send in WhatsApp
-            
+            // Detect if mobile or desktop
+            const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
+            const isAndroid = /Android/i.test(navigator.userAgent);
+            const isIOS = /iPhone|iPad|iPod/i.test(navigator.userAgent);
+
+            let whatsappUrl;
+
+            if (isAndroid) {
+                // Android: open WhatsApp Business directly
+                whatsappUrl = `intent://send?phone=${phoneNumber}&text=${message}#Intent;package=com.whatsapp.w4b;scheme=whatsapp;end`;
+            } else if (isIOS) {
+                // iOS: deep link to WhatsApp Business
+                whatsappUrl = `whatsapp://send?phone=${phoneNumber}&text=${message}`;
+            } else {
+                // Desktop: use wa.me web link
+                whatsappUrl = `https://wa.me/${phoneNumber}?text=${message}`;
+            }
+
+            window.location.href = whatsappUrl;
+
+            // Mark as sent after 5 seconds (enough time to send in WhatsApp Business)
+            setTimeout(() => {
+                contact.status = 'sent';
+                saveContacts();
+                updateStats();
+                renderContactList();
+            }, 5000);
+
             if (imageFile) {
                 setTimeout(() => {
-                    alert('📸 Don\'t forget to attach your image in WhatsApp!');
-                }, 500);
+                    alert('📸 Don\'t forget to attach your image in WhatsApp Business!');
+                }, 1000);
             }
         }
 
@@ -1134,15 +1156,16 @@
                 return;
             }
 
-            const delay = parseInt(settings.sendDelay) * 1000;
+            const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
+            const delay = isMobile ? 10000 : (parseInt(settings.sendDelay) * 1000);
             const totalTime = Math.ceil((pendingContacts.length * delay) / 60000);
 
-            if (!confirm(`🚀 Send to ${pendingContacts.length} contacts?\n\n⏱️ Estimated time: ${totalTime} minute(s)\n\n⚠️ Make sure popup blocker is disabled!`)) {
+            if (!confirm(`🚀 Send to ${pendingContacts.length} contacts?\n\n⏱️ Estimated time: ~${totalTime} minute(s)\n\n${isMobile ? '📱 WhatsApp Business will open for each contact.\n➤ Send message then press BACK to return here.' : '⚠️ Make sure popup blocker is disabled!'}`)) {
                 return;
             }
 
             if (imageFile) {
-                alert('📸 Reminder: Attach your image manually in each WhatsApp chat!');
+                alert('📸 Reminder: Attach your image in WhatsApp Business before sending!');
             }
 
             // Show progress container
@@ -1156,25 +1179,69 @@
             isPaused = false;
             currentIndex = 0;
 
-            sendingInterval = setInterval(() => {
-                if (isPaused) return;
+            // On mobile, use page visibility to detect when user comes back from WhatsApp
+            const isMobileDevice = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
 
-                const pendingList = contacts.filter(c => c.status === 'pending');
-                if (currentIndex >= pendingList.length) {
-                    stopSending();
-                    alert('✅ All messages sent successfully!');
-                    return;
+            if (isMobileDevice) {
+                // Mobile: send one by one, wait for user to come back
+                sendNextMobile(pendingContacts, 0, delay);
+            } else {
+                // Desktop: use interval
+                sendingInterval = setInterval(() => {
+                    if (isPaused) return;
+
+                    const pendingList = contacts.filter(c => c.status === 'pending');
+                    if (currentIndex >= pendingList.length) {
+                        stopSending();
+                        alert('✅ All messages sent successfully!');
+                        return;
+                    }
+
+                    const contact = pendingList[currentIndex];
+                    sendSingleMessage(contact.id);
+                    
+                    currentIndex++;
+                    const progress = (currentIndex / pendingList.length) * 100;
+                    document.getElementById('progressFill').style.width = progress + '%';
+                    document.getElementById('progressText').textContent = 
+                        `Sending... ${currentIndex}/${pendingList.length}`;
+                }, delay);
+            }
+        }
+
+        // Mobile: send next contact when user returns from WhatsApp Business
+        function sendNextMobile(pendingContacts, index, delay) {
+            if (index >= pendingContacts.length) {
+                stopSending();
+                alert('✅ All messages sent!');
+                return;
+            }
+
+            if (isPaused) {
+                // Check again after 1 second
+                setTimeout(() => sendNextMobile(pendingContacts, index, delay), 1000);
+                return;
+            }
+
+            const contact = pendingContacts[index];
+            sendSingleMessage(contact.id);
+
+            const progress = ((index + 1) / pendingContacts.length) * 100;
+            document.getElementById('progressFill').style.width = progress + '%';
+            document.getElementById('progressText').textContent = 
+                `📱 Send in WhatsApp Business then press BACK (${index + 1}/${pendingContacts.length})`;
+
+            currentIndex = index + 1;
+
+            // Wait for user to come back from WhatsApp Business then send next
+            document.addEventListener('visibilitychange', function handler() {
+                if (document.visibilityState === 'visible') {
+                    document.removeEventListener('visibilitychange', handler);
+                    setTimeout(() => {
+                        sendNextMobile(pendingContacts, index + 1, delay);
+                    }, 1500); // small delay before opening next
                 }
-
-                const contact = pendingList[currentIndex];
-                sendSingleMessage(contact.id);
-                
-                currentIndex++;
-                const progress = (currentIndex / pendingList.length) * 100;
-                document.getElementById('progressFill').style.width = progress + '%';
-                document.getElementById('progressText').textContent = 
-                    `Sending... ${currentIndex}/${pendingList.length}`;
-            }, delay);
+            });
         }
 
         // Pause Sending
